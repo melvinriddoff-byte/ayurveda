@@ -7,7 +7,7 @@ import { doshaQuestions, doshaDescriptions } from '../data/mockData';
 import type { DoshaType } from '../types';
 import { sendOtp, verifyOtp } from '../lib/services/auth';
 import { upsertProfile } from '../lib/services/profiles';
-import { supabase } from '../lib/supabase';
+import { supabase, SUPABASE_CONFIGURED } from '../lib/supabase';
 
 type Step = 'welcome' | 'phone' | 'otp' | 'name' | 'dosha' | 'done';
 
@@ -103,15 +103,19 @@ export default function Signup() {
         setDosha(result);
         setLoading(true);
         try {
-          const { data: { user: authUser } } = await supabase.auth.getUser();
-          if (authUser) {
-            const profile = await upsertProfile(authUser.id, { name, phone: `+91${phone}`, dosha: result, role: 'patient' });
-            login({ id: authUser.id, name: profile?.name ?? name, phone: `+91${phone}`, dosha: result });
+          if (SUPABASE_CONFIGURED) {
+            const { data: { user: authUser } } = await supabase.auth.getUser();
+            if (authUser) {
+              const profile = await upsertProfile(authUser.id, { name, phone: `+91${phone}`, dosha: result, role: 'patient' });
+              login({ id: authUser.id, name: profile?.name ?? name, phone: `+91${phone}`, dosha: result });
+            } else {
+              login({ id: 'u-' + Date.now(), name, phone: `+91${phone}`, dosha: result });
+            }
           } else {
-            login({ id: 'u-' + Date.now(), name, phone, dosha: result });
+            login({ id: 'demo-' + Date.now(), name, phone: `+91${phone}`, dosha: result });
           }
         } catch {
-          login({ id: 'u-' + Date.now(), name, phone, dosha: result });
+          login({ id: 'demo-' + Date.now(), name, phone: `+91${phone}`, dosha: result });
         } finally {
           setLoading(false);
           go('done');
@@ -200,6 +204,9 @@ export default function Signup() {
                       onKeyDown={e => e.key === 'Enter' && phone.length === 10 && handleSendOtp()}
                     />
                   </div>
+                  {!SUPABASE_CONFIGURED && (
+                    <p className="text-xs text-stone-400 mb-3">Demo mode — no real SMS will be sent</p>
+                  )}
                   {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
                   <button
                     onClick={handleSendOtp}
@@ -218,8 +225,14 @@ export default function Signup() {
                     <span className="text-2xl">🔐</span>
                   </div>
                   <h2 className="font-display text-3xl font-bold text-stone-800 mb-2">Verify your number</h2>
-                  <p className="text-stone-500 text-sm mb-2">OTP sent to +91 {phone}</p>
-                  <p className="text-xs text-stone-400 mb-8">Enter the 6-digit code sent via SMS</p>
+                  <p className="text-stone-500 text-sm mb-2">
+                    {SUPABASE_CONFIGURED ? `OTP sent to +91 ${phone}` : `Demo mode — enter any 6 digits`}
+                  </p>
+                  {!SUPABASE_CONFIGURED && (
+                    <div className="bg-saffron-50 border border-saffron-200 rounded-xl px-3 py-2 mb-4 text-xs text-saffron-700">
+                      Supabase not configured. Any 6-digit code will work.
+                    </div>
+                  )}
 
                   <div className="flex gap-3 justify-center mb-8">
                     {otp.map((digit, i) => (
