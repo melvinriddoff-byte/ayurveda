@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, type ReactNode } from '
 import type { DoshaType } from '../types';
 import { onAuthChange, signOut as authSignOut } from '../lib/services/auth';
 import { getProfile, upsertProfile } from '../lib/services/profiles';
+import { FIREBASE_CONFIGURED } from '../lib/firebase';
 
 export interface AppUser {
   id: string;
@@ -29,21 +30,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = onAuthChange(async (firebaseUser) => {
-      if (firebaseUser) {
-        const profile = await getProfile(firebaseUser.uid);
-        setUser({
-          id: firebaseUser.uid,
-          name: profile?.name ?? firebaseUser.displayName ?? '',
-          phone: profile?.phone ?? '',
-          email: firebaseUser.email ?? '',
-          dosha: profile?.dosha ?? 'vata',
-          avatar: firebaseUser.photoURL ?? profile?.avatar_url ?? undefined,
-        });
-      } else {
-        setUser(null);
-      }
+    if (!FIREBASE_CONFIGURED) {
       setLoading(false);
+      return;
+    }
+    const unsub = onAuthChange(async (firebaseUser) => {
+      try {
+        if (firebaseUser) {
+          const profile = await getProfile(firebaseUser.uid);
+          setUser({
+            id: firebaseUser.uid,
+            name: profile?.name ?? firebaseUser.displayName ?? '',
+            phone: profile?.phone ?? '',
+            email: firebaseUser.email ?? '',
+            dosha: profile?.dosha ?? 'vata',
+            avatar: firebaseUser.photoURL ?? profile?.avatar_url ?? undefined,
+          });
+        } else {
+          setUser(null);
+        }
+      } catch {
+        setUser(null);
+      } finally {
+        setLoading(false);
+      }
     });
     return unsub;
   }, []);

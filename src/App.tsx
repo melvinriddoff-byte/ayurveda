@@ -63,7 +63,18 @@ function Layout({ children }: { children: React.ReactNode }) {
 }
 
 function AppRoutes() {
-  const { isAuthenticated } = useApp();
+  const { isAuthenticated, loading } = useApp();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-warm flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-saffron-200 border-t-saffron-500 rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-stone-400 text-sm">Loading…</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <Layout>
