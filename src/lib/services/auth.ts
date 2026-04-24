@@ -3,10 +3,7 @@ import { supabase, SUPABASE_CONFIGURED } from '../supabase';
 // Send OTP to phone (+91XXXXXXXXXX format)
 export async function sendOtp(phone: string) {
   if (!SUPABASE_CONFIGURED) return; // demo mode — skip network call
-  const { error } = await supabase.auth.signInWithOtp({
-    phone,
-    options: { channel: 'sms' },
-  });
+  const { error } = await supabase.auth.signInWithOtp({ phone });
   if (error) throw error;
 }
 
