@@ -1,32 +1,39 @@
-import { supabase, SUPABASE_CONFIGURED } from '../supabase';
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signInWithPopup,
+  GoogleAuthProvider,
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+  type User,
+} from 'firebase/auth';
+import { auth, FIREBASE_CONFIGURED } from '../firebase';
 
-// Send OTP to phone (+91XXXXXXXXXX format)
-export async function sendOtp(phone: string) {
-  if (!SUPABASE_CONFIGURED) return; // demo mode — skip network call
-  const { error } = await supabase.auth.signInWithOtp({ phone });
-  if (error) throw error;
+const googleProvider = new GoogleAuthProvider();
+
+export async function signInWithGoogle() {
+  if (!FIREBASE_CONFIGURED) throw new Error('Firebase not configured');
+  const result = await signInWithPopup(auth, googleProvider);
+  return result.user;
 }
 
-// Verify OTP — returns session on success
-export async function verifyOtp(phone: string, token: string) {
-  if (!SUPABASE_CONFIGURED) return null; // demo mode — accept any OTP
-  const { data, error } = await supabase.auth.verifyOtp({
-    phone,
-    token,
-    type: 'sms',
-  });
-  if (error) throw error;
-  return data;
+export async function signInWithEmail(email: string, password: string) {
+  if (!FIREBASE_CONFIGURED) throw new Error('Firebase not configured');
+  const result = await signInWithEmailAndPassword(auth, email, password);
+  return result.user;
 }
 
-// Get current session
-export async function getSession() {
-  const { data } = await supabase.auth.getSession();
-  return data.session;
+export async function signUpWithEmail(email: string, password: string) {
+  if (!FIREBASE_CONFIGURED) throw new Error('Firebase not configured');
+  const result = await createUserWithEmailAndPassword(auth, email, password);
+  return result.user;
 }
 
-// Sign out
 export async function signOut() {
-  const { error } = await supabase.auth.signOut();
-  if (error) throw error;
+  if (!FIREBASE_CONFIGURED) return;
+  await firebaseSignOut(auth);
+}
+
+export function onAuthChange(cb: (user: User | null) => void) {
+  return onAuthStateChanged(auth, cb);
 }

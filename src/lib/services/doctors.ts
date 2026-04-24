@@ -1,112 +1,53 @@
-import { supabase } from '../supabase';
-import type { DoctorWithRelations } from '../database.types';
+import {
+  collection, doc, getDoc, getDocs, addDoc, query, where, orderBy,
+} from 'firebase/firestore';
+import { db } from '../firebase';
+import type { Doctor, DoctorWithRelations } from '../database.types';
 
-// Fetch all doctors with hospital name and speciality names
-export async function getDoctors(): Promise<DoctorWithRelations[]> {
-  const { data, error } = await supabase
-    .from('doctors')
-    .select(`
-      *,
-      hospitals ( name ),
-      doctor_specialities (
-        specialities ( name )
-      )
-    `)
-    .order('rating', { ascending: false });
-
-  if (error) throw error;
-
-  return (data ?? []).map((row: any) => ({
-    ...row,
-    hospital_name: row.hospitals?.name ?? '',
-    speciality_names: (row.doctor_specialities ?? []).map((ds: any) => ds.specialities?.name).filter(Boolean),
-    hospitals: undefined,
-    doctor_specialities: undefined,
-  }));
-}
-
-// Fetch a single doctor by ID
-export async function getDoctorById(id: string): Promise<DoctorWithRelations | null> {
-  const { data, error } = await supabase
-    .from('doctors')
-    .select(`
-      *,
-      hospitals ( id, name ),
-      doctor_specialities (
-        specialities ( name )
-      )
-    `)
-    .eq('id', id)
-    .single();
-
-  if (error || !data) return null;
-
-  const row = data as any;
-  return {
-    ...row,
-    hospital_name: row.hospitals?.name ?? '',
-    speciality_names: (row.doctor_specialities ?? [])
-      .map((ds: any) => ds.specialities?.name)
-      .filter(Boolean),
-    hospitals: undefined,
-    doctor_specialities: undefined,
-  } as DoctorWithRelations;
-}
-
-// Fetch doctors belonging to a hospital
-export async function getDoctorsByHospital(hospitalId: string): Promise<DoctorWithRelations[]> {
-  const { data, error } = await supabase
-    .from('doctors')
-    .select(`
-      *,
-      hospitals ( name ),
-      doctor_specialities ( specialities ( name ) )
-    `)
-    .eq('hospital_id', hospitalId)
-    .order('rating', { ascending: false });
-
-  if (error) throw error;
-
-  return (data ?? []).map((row: any) => ({
-    ...row,
-    hospital_name: row.hospitals?.name ?? '',
-    speciality_names: (row.doctor_specialities ?? []).map((ds: any) => ds.specialities?.name).filter(Boolean),
-    hospitals: undefined,
-    doctor_specialities: undefined,
-  }));
-}
-
-// Add a new doctor (hospital owner action)
-export async function addDoctor(doctor: {
-  hospital_id: string;
-  name: string;
-  title?: string;
-  bio?: string;
-  experience?: number;
-  education?: string[];
-  languages?: string[];
-  consultation_fee?: number;
-  video_fee?: number;
-  available_days?: string[];
-  accepts_video?: boolean;
-  dosha_expertise?: string[];
-  photo_url?: string;
-  speciality_ids?: string[];
-}) {
-  const { speciality_ids, ...doctorData } = doctor;
-
-  const { data, error } = await supabase
-    .from('doctors')
-    .insert(doctorData)
-    .select()
-    .single();
-  if (error) throw error;
-
-  // Link specialities
-  if (speciality_ids?.length) {
-    const links = speciality_ids.map(sid => ({ doctor_id: data.id, speciality_id: sid }));
-    await supabase.from('doctor_specialities').insert(links);
+async function enrichDoctor(data: any, id: string): Promise<DoctorWithRelations> {
+  let hospital_name = '';
+  if (data.hospital_id) {
+    const hSnap = await getDoc(doc(db, 'hospitals', data.hospital_id));
+    if (hSnap.exists()) hospital_name = (hSnap.data() as any).name ?? '';
   }
+  const specNames: string[] = [];
+  if (data.speciality_ids?.length) {
+    for (const sid of data.speciality_ids) {
+      const sSnap = await getDoc(doc(db, 'specialities', sid));
+      if (sSnap.exists()) specNames.push((sSnap.data() as any).name ?? '');
+    }
+  }
+  return { id, ...data, hospital_name, speciality_names: specNames } as DoctorWithRelations;
+}
 
-  return data;
+export async function getDoctors(): Promise<DoctorWithRelations[]> {
+  const snap = await getDocs(query(collection(db, 'doctors'), orderBy('rating', 'desc')));
+  return Promise.all(snap.docs.map(d => enrichDoctor(d.data(), d.id)));
+}
+
+export async function getDoctorById(id: string): Promise<DoctorWithRelations | null> {
+  const snap = await getDoc(doc(db, 'doctors', id));
+  if (!snap.exists()) return null;
+  return enrichDoctor(snap.data(), snap.id);
+}
+
+export async function getDoctorsByHospital(hospitalId: string): Promise<DoctorWithRelations[]> {
+  const snap = await getDocs(query(
+    collection(db, 'doctors'),
+    where('hospital_id', '==', hospitalId),
+    orderBy('rating', 'desc')
+  ));
+  return Promise.all(snap.docs.map(d => enrichDoctor(d.data(), d.id)));
+}
+
+export async function addDoctor(doctor: Omit<Doctor, 'id' | 'created_at' | 'rating' | 'review_count'> & { speciality_ids?: string[] }) {
+  const { speciality_ids, ...data } = doctor;
+  const ref = await addDoc(collection(db, 'doctors'), {
+    ...data,
+    rating: 0,
+    review_count: 0,
+    speciality_ids: speciality_ids ?? [],
+    created_at: new Date().toISOString(),
+  });
+  return { id: ref.id, ...data };
 }

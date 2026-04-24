@@ -1,45 +1,37 @@
-import { supabase } from '../supabase';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 import type { Profile, DoshaType } from '../database.types';
 
-// Fetch a single profile by user ID
 export async function getProfile(userId: string): Promise<Profile | null> {
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', userId)
-    .single();
-  if (error) return null;
-  return data;
+  const snap = await getDoc(doc(db, 'profiles', userId));
+  if (!snap.exists()) return null;
+  return { id: snap.id, ...snap.data() } as Profile;
 }
 
-// Upsert profile after signup (name + optional dosha)
 export async function upsertProfile(
   userId: string,
   updates: { name?: string; phone?: string; dosha?: DoshaType | null; role?: 'patient' | 'hospital' | 'doctor' }
 ): Promise<Profile | null> {
-  const { data, error } = await supabase
-    .from('profiles')
-    .upsert({ id: userId, ...updates }, { onConflict: 'id' })
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
+  const ref = doc(db, 'profiles', userId);
+  const snap = await getDoc(ref);
+  const now = new Date().toISOString();
+  if (snap.exists()) {
+    await updateDoc(ref, { ...updates, updated_at: now });
+  } else {
+    await setDoc(ref, {
+      name: null, phone: null, dosha: null, role: 'patient', avatar_url: null,
+      created_at: now, updated_at: now,
+      ...updates,
+    });
+  }
+  const updated = await getDoc(ref);
+  return { id: updated.id, ...updated.data() } as Profile;
 }
 
-// Update name
 export async function updateProfileName(userId: string, name: string) {
-  const { error } = await supabase
-    .from('profiles')
-    .update({ name })
-    .eq('id', userId);
-  if (error) throw error;
+  await updateDoc(doc(db, 'profiles', userId), { name, updated_at: new Date().toISOString() });
 }
 
-// Update dosha
 export async function updateProfileDosha(userId: string, dosha: DoshaType) {
-  const { error } = await supabase
-    .from('profiles')
-    .update({ dosha })
-    .eq('id', userId);
-  if (error) throw error;
+  await updateDoc(doc(db, 'profiles', userId), { dosha, updated_at: new Date().toISOString() });
 }

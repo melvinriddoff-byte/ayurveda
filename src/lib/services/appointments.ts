@@ -1,31 +1,35 @@
-import { supabase } from '../supabase';
-import type { AppointmentWithRelations, AppointmentStatus, AppointmentType, Appointment } from '../database.types';
+import {
+  collection, doc, getDoc, getDocs, addDoc, updateDoc, query, where, orderBy,
+} from 'firebase/firestore';
+import { db } from '../firebase';
+import type { Appointment, AppointmentStatus, AppointmentType, AppointmentWithRelations } from '../database.types';
+
+async function enrichAppointment(data: any, id: string): Promise<AppointmentWithRelations> {
+  let doctor_name = '', doctor_photo = '', hospital_name = '';
+  if (data.doctor_id) {
+    const snap = await getDoc(doc(db, 'doctors', data.doctor_id));
+    if (snap.exists()) { doctor_name = (snap.data() as any).name ?? ''; doctor_photo = (snap.data() as any).photo_url ?? ''; }
+  }
+  if (data.hospital_id) {
+    const snap = await getDoc(doc(db, 'hospitals', data.hospital_id));
+    if (snap.exists()) hospital_name = (snap.data() as any).name ?? '';
+  }
+  return { id, ...data, doctor_name, doctor_photo, hospital_name } as AppointmentWithRelations;
+}
 
 export async function getMyAppointments(patientId: string): Promise<AppointmentWithRelations[]> {
-  const { data, error } = await supabase
-    .from('appointments')
-    .select(`*, doctors ( name, photo_url ), hospitals ( name )`)
-    .eq('patient_id', patientId)
-    .order('date', { ascending: false });
-  if (error) throw error;
-  return (data ?? []).map((row: any) => ({
-    ...row,
-    doctor_name: row.doctors?.name ?? '',
-    doctor_photo: row.doctors?.photo_url ?? '',
-    hospital_name: row.hospitals?.name ?? '',
-    doctors: undefined,
-    hospitals: undefined,
-  }));
+  const snap = await getDocs(query(
+    collection(db, 'appointments'),
+    where('patient_id', '==', patientId),
+    orderBy('date', 'desc')
+  ));
+  return Promise.all(snap.docs.map(d => enrichAppointment(d.data(), d.id)));
 }
 
 export async function getAppointmentById(id: string): Promise<Appointment | null> {
-  const { data, error } = await supabase
-    .from('appointments')
-    .select('*')
-    .eq('id', id)
-    .single();
-  if (error) return null;
-  return data;
+  const snap = await getDoc(doc(db, 'appointments', id));
+  if (!snap.exists()) return null;
+  return { id: snap.id, ...snap.data() } as Appointment;
 }
 
 export async function createAppointment(appointment: {
@@ -39,13 +43,16 @@ export async function createAppointment(appointment: {
   fee?: number;
   meeting_link?: string | null;
 }): Promise<Appointment> {
-  const { data, error } = await supabase
-    .from('appointments')
-    .insert({ status: 'pending', ...appointment })
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
+  const now = new Date().toISOString();
+  const ref = await addDoc(collection(db, 'appointments'), {
+    ...appointment,
+    status: 'pending',
+    follow_up_date: null,
+    prescription: null,
+    created_at: now,
+    updated_at: now,
+  });
+  return { id: ref.id, ...appointment, status: 'pending', follow_up_date: null, prescription: null, created_at: now, updated_at: now } as Appointment;
 }
 
 export async function updateAppointmentStatus(
@@ -53,11 +60,7 @@ export async function updateAppointmentStatus(
   status: AppointmentStatus,
   extras?: { notes?: string; follow_up_date?: string; prescription?: string; meeting_link?: string }
 ) {
-  const { error } = await supabase
-    .from('appointments')
-    .update({ status, ...extras })
-    .eq('id', id);
-  if (error) throw error;
+  await updateDoc(doc(db, 'appointments', id), { status, ...extras, updated_at: new Date().toISOString() });
 }
 
 export async function cancelAppointment(id: string) {

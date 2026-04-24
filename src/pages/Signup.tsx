@@ -1,24 +1,24 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Leaf, ArrowRight, ArrowLeft, Phone, CheckCircle2, Sparkles } from 'lucide-react';
+import { Leaf, ArrowRight, ArrowLeft, Mail, CheckCircle2, Sparkles, Eye, EyeOff } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { doshaQuestions, doshaDescriptions } from '../data/mockData';
 import type { DoshaType } from '../types';
-import { sendOtp, verifyOtp } from '../lib/services/auth';
-import { upsertProfile } from '../lib/services/profiles';
-import { supabase, SUPABASE_CONFIGURED } from '../lib/supabase';
+import { signInWithGoogle, signInWithEmail, signUpWithEmail } from '../lib/services/auth';
+import { upsertProfile, getProfile } from '../lib/services/profiles';
+import { FIREBASE_CONFIGURED } from '../lib/firebase';
 
-type Step = 'welcome' | 'phone' | 'otp' | 'name' | 'dosha' | 'done';
-
-const STEP_ORDER: Step[] = ['welcome', 'phone', 'otp', 'name', 'dosha', 'done'];
-
+type Step = 'welcome' | 'auth' | 'name' | 'dosha' | 'done';
+const STEP_ORDER: Step[] = ['welcome', 'auth', 'name', 'dosha', 'done'];
 
 export default function Signup() {
   const [step, setStep] = useState<Step>('welcome');
   const [dir, setDir] = useState(1);
-  const [phone, setPhone] = useState('');
-  const [otp, setOtp] = useState(['', '', '', '', '', '']);
+  const [isSignIn, setIsSignIn] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState('');
   const [doshaAnswers, setDoshaAnswers] = useState<Record<string, 'vata' | 'pitta' | 'kapha'>>({});
   const [doshaStep, setDoshaStep] = useState(0);
@@ -26,7 +26,6 @@ export default function Signup() {
   const [dosha, setDosha] = useState<DoshaType>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
   const { login } = useApp();
   const navigate = useNavigate();
 
@@ -38,88 +37,92 @@ export default function Signup() {
     setStep(next);
   };
 
-  const handleSendOtp = async () => {
-    if (phone.length !== 10) return;
+  const handleGoogleSignIn = async () => {
+    if (!FIREBASE_CONFIGURED) {
+      login({ id: 'demo-' + Date.now(), name: 'Demo User', phone: '', email: 'demo@vaidya.com', dosha: 'vata' });
+      navigate('/home');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
-      await sendOtp(`+91${phone}`);
-      go('otp');
+      const fbUser = await signInWithGoogle();
+      const profile = await getProfile(fbUser.uid);
+      if (profile?.dosha) {
+        login({ id: fbUser.uid, name: profile.name ?? fbUser.displayName ?? '', phone: profile.phone ?? '', email: fbUser.email ?? '', dosha: profile.dosha });
+        navigate('/home');
+      } else {
+        login({ id: fbUser.uid, name: fbUser.displayName ?? '', phone: '', email: fbUser.email ?? '', dosha: 'vata' });
+        setName(fbUser.displayName ?? '');
+        go('name');
+      }
     } catch (e: any) {
-      setError(e.message ?? 'Failed to send OTP. Please try again.');
+      setError(e.message ?? 'Google sign-in failed');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleVerifyOtp = async () => {
-    if (otp.some(d => !d)) return;
+  const handleEmailAuth = async () => {
+    if (!email.trim() || !password) return;
     setLoading(true);
     setError('');
     try {
-      await verifyOtp(`+91${phone}`, otp.join(''));
-      go('name');
+      if (!FIREBASE_CONFIGURED) {
+        login({ id: 'demo-' + Date.now(), name: email.split('@')[0], phone: '', email, dosha: 'vata' });
+        go('name');
+        return;
+      }
+      const fbUser = isSignIn
+        ? await signInWithEmail(email, password)
+        : await signUpWithEmail(email, password);
+      const profile = await getProfile(fbUser.uid);
+      if (isSignIn && profile?.dosha) {
+        login({ id: fbUser.uid, name: profile.name ?? '', phone: profile.phone ?? '', email: fbUser.email ?? '', dosha: profile.dosha });
+        navigate('/home');
+      } else {
+        login({ id: fbUser.uid, name: profile?.name ?? email.split('@')[0], phone: '', email: fbUser.email ?? '', dosha: 'vata' });
+        go('name');
+      }
     } catch (e: any) {
-      setError(e.message ?? 'Invalid OTP. Please try again.');
+      const msg = e.code === 'auth/email-already-in-use' ? 'Account already exists. Sign in instead.'
+        : e.code === 'auth/user-not-found' || e.code === 'auth/wrong-password' ? 'Incorrect email or password.'
+        : e.code === 'auth/weak-password' ? 'Password must be at least 6 characters.'
+        : e.message ?? 'Authentication failed';
+      setError(msg);
     } finally {
       setLoading(false);
     }
-  };
-
-  // OTP auto-focus
-  useEffect(() => {
-    if (step === 'otp') otpRefs.current[0]?.focus();
-  }, [step]);
-
-  const handleOtpChange = (i: number, val: string) => {
-    if (!/^\d*$/.test(val)) return;
-    const next = [...otp];
-    next[i] = val.slice(-1);
-    setOtp(next);
-    if (val && i < 5) otpRefs.current[i + 1]?.focus();
-  };
-
-  const handleOtpKey = (i: number, e: React.KeyboardEvent) => {
-    if (e.key === 'Backspace' && !otp[i] && i > 0) otpRefs.current[i - 1]?.focus();
-  };
-
-  const computeDosha = (): 'vata' | 'pitta' | 'kapha' => {
-    const scores = { vata: 0, pitta: 0, kapha: 0 };
-    Object.values(doshaAnswers).forEach(d => { scores[d]++; });
-    return (Object.keys(scores) as Array<'vata' | 'pitta' | 'kapha'>).reduce((a, b) =>
-      scores[a] >= scores[b] ? a : b
-    );
   };
 
   const handleDoshaNext = async () => {
-    if (selectedOpt) {
-      const q = doshaQuestions[doshaStep];
-      setDoshaAnswers(prev => ({ ...prev, [q.id]: selectedOpt as 'vata' | 'pitta' | 'kapha' }));
-      setSelectedOpt(null);
-      if (doshaStep + 1 < doshaQuestions.length) {
-        setDoshaStep(s => s + 1);
-      } else {
-        const result = computeDosha();
-        setDosha(result);
-        setLoading(true);
-        try {
-          if (SUPABASE_CONFIGURED) {
-            const { data: { user: authUser } } = await supabase.auth.getUser();
-            if (authUser) {
-              const profile = await upsertProfile(authUser.id, { name, phone: `+91${phone}`, dosha: result, role: 'patient' });
-              login({ id: authUser.id, name: profile?.name ?? name, phone: `+91${phone}`, dosha: result });
-            } else {
-              login({ id: 'u-' + Date.now(), name, phone: `+91${phone}`, dosha: result });
-            }
-          } else {
-            login({ id: 'demo-' + Date.now(), name, phone: `+91${phone}`, dosha: result });
-          }
-        } catch {
-          login({ id: 'demo-' + Date.now(), name, phone: `+91${phone}`, dosha: result });
-        } finally {
-          setLoading(false);
-          go('done');
+    if (!selectedOpt) return;
+    const q = doshaQuestions[doshaStep];
+    const newAnswers = { ...doshaAnswers, [q.id]: selectedOpt as 'vata' | 'pitta' | 'kapha' };
+    setDoshaAnswers(newAnswers);
+    setSelectedOpt(null);
+    if (doshaStep + 1 < doshaQuestions.length) {
+      setDoshaStep(s => s + 1);
+    } else {
+      const scores = { vata: 0, pitta: 0, kapha: 0 };
+      Object.values(newAnswers).forEach(d => { scores[d]++; });
+      const result = (Object.keys(scores) as Array<'vata' | 'pitta' | 'kapha'>).reduce((a, b) =>
+        scores[a] >= scores[b] ? a : b
+      );
+      setDosha(result);
+      setLoading(true);
+      try {
+        const stored = JSON.parse(sessionStorage.getItem('vaidya_user') || 'null');
+        const uid = stored?.id;
+        if (uid && FIREBASE_CONFIGURED) {
+          await upsertProfile(uid, { name, dosha: result, role: 'patient' });
         }
+        login({ ...(stored ?? { id: 'demo-' + Date.now(), phone: '', email: '' }), name, dosha: result });
+      } catch {
+        // profile save failed — user is still logged in locally
+      } finally {
+        setLoading(false);
+        go('done');
       }
     }
   };
@@ -129,24 +132,18 @@ export default function Signup() {
 
   return (
     <div className="min-h-screen bg-warm flex flex-col">
-      {/* Top bar */}
       {step !== 'welcome' && step !== 'done' && (
         <div className="w-full px-4 pt-5 pb-2 max-w-sm mx-auto">
           <div className="flex items-center gap-3">
-            {step !== 'phone' && (
-              <button
-                onClick={() => go(STEP_ORDER[STEP_ORDER.indexOf(step) - 1])}
-                className="p-1.5 rounded-full hover:bg-stone-200 text-stone-500 transition-colors"
-              >
+            {step !== 'auth' && (
+              <button onClick={() => go(STEP_ORDER[STEP_ORDER.indexOf(step) - 1])}
+                className="p-1.5 rounded-full hover:bg-stone-200 text-stone-500 transition-colors">
                 <ArrowLeft className="w-5 h-5" />
               </button>
             )}
             <div className="flex-1 h-1.5 bg-stone-200 rounded-full overflow-hidden">
-              <motion.div
-                animate={{ width: `${progress}%` }}
-                transition={{ duration: 0.4 }}
-                className="h-full bg-saffron-500 rounded-full"
-              />
+              <motion.div animate={{ width: `${progress}%` }} transition={{ duration: 0.4 }}
+                className="h-full bg-saffron-500 rounded-full" />
             </div>
           </div>
         </div>
@@ -159,9 +156,7 @@ export default function Signup() {
               key={step + (step === 'dosha' ? doshaStep : '')}
               custom={dir}
               variants={{ enter: d => ({ opacity: 0, x: d * 40 }), center: { opacity: 1, x: 0 }, exit: d => ({ opacity: 0, x: d * -40 }) }}
-              initial="enter"
-              animate="center"
-              exit="exit"
+              initial="enter" animate="center" exit="exit"
               transition={{ duration: 0.25, ease: 'easeOut' }}
             >
 
@@ -171,98 +166,83 @@ export default function Signup() {
                   <div className="w-20 h-20 bg-saffron-500 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-xl">
                     <Leaf className="w-10 h-10 text-white" />
                   </div>
-                  <h1 className="font-display text-4xl font-bold text-stone-800 mb-3">
-                    Welcome to Vaidya
-                  </h1>
+                  <h1 className="font-display text-4xl font-bold text-stone-800 mb-3">Welcome to Vaidya</h1>
                   <p className="text-stone-500 leading-relaxed mb-8">
                     Your personalised Ayurvedic care companion. Connect with certified Vaidyas, discover your dosha, and heal holistically.
                   </p>
-                  <button onClick={() => go('phone')} className="btn-primary w-full flex items-center justify-center gap-2 py-4 text-base">
+                  <button onClick={() => go('auth')} className="btn-primary w-full flex items-center justify-center gap-2 py-4 text-base">
                     Get Started <ArrowRight className="w-5 h-5" />
                   </button>
                   <p className="text-xs text-stone-400 mt-4">By continuing you agree to our Terms &amp; Privacy Policy</p>
                 </div>
               )}
 
-              {/* ── PHONE ── */}
-              {step === 'phone' && (
+              {/* ── AUTH ── */}
+              {step === 'auth' && (
                 <div>
                   <div className="w-14 h-14 bg-saffron-100 rounded-2xl flex items-center justify-center mb-6">
-                    <Phone className="w-7 h-7 text-saffron-600" />
+                    <Mail className="w-7 h-7 text-saffron-600" />
                   </div>
-                  <h2 className="font-display text-3xl font-bold text-stone-800 mb-2">Enter your number</h2>
-                  <p className="text-stone-500 text-sm mb-8">We'll send a one-time code to verify your phone</p>
-                  <div className="flex items-center border-2 border-stone-200 focus-within:border-saffron-400 rounded-2xl overflow-hidden transition-colors bg-white mb-6">
-                    <span className="px-4 py-4 text-stone-500 font-medium text-sm border-r border-stone-200 bg-stone-50">+91</span>
-                    <input
-                      type="tel"
-                      value={phone}
-                      onChange={e => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                      placeholder="98765 43210"
-                      className="flex-1 px-4 py-4 text-lg font-medium text-stone-800 focus:outline-none bg-white tracking-widest"
-                      autoFocus
-                      onKeyDown={e => e.key === 'Enter' && phone.length === 10 && handleSendOtp()}
-                    />
-                  </div>
-                  {!SUPABASE_CONFIGURED && (
-                    <p className="text-xs text-stone-400 mb-3">Demo mode — no real SMS will be sent</p>
-                  )}
-                  {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
-                  <button
-                    onClick={handleSendOtp}
-                    disabled={phone.length !== 10 || loading}
-                    className="btn-primary w-full py-4 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {loading ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <>Send OTP <ArrowRight className="w-5 h-5" /></>}
-                  </button>
-                </div>
-              )}
-
-              {/* ── OTP ── */}
-              {step === 'otp' && (
-                <div>
-                  <div className="w-14 h-14 bg-saffron-100 rounded-2xl flex items-center justify-center mb-6">
-                    <span className="text-2xl">🔐</span>
-                  </div>
-                  <h2 className="font-display text-3xl font-bold text-stone-800 mb-2">Verify your number</h2>
-                  <p className="text-stone-500 text-sm mb-2">
-                    {SUPABASE_CONFIGURED ? `OTP sent to +91 ${phone}` : `Demo mode — enter any 6 digits`}
+                  <h2 className="font-display text-3xl font-bold text-stone-800 mb-1">
+                    {isSignIn ? 'Welcome back' : 'Create account'}
+                  </h2>
+                  <p className="text-stone-500 text-sm mb-6">
+                    {isSignIn ? 'Sign in to continue your healing journey' : 'Join thousands on their Ayurvedic journey'}
                   </p>
-                  {!SUPABASE_CONFIGURED && (
-                    <div className="bg-saffron-50 border border-saffron-200 rounded-xl px-3 py-2 mb-4 text-xs text-saffron-700">
-                      Supabase not configured. Any 6-digit code will work.
-                    </div>
-                  )}
 
-                  <div className="flex gap-3 justify-center mb-8">
-                    {otp.map((digit, i) => (
-                      <input
-                        key={i}
-                        ref={el => { otpRefs.current[i] = el; }}
-                        type="text"
-                        inputMode="numeric"
-                        maxLength={1}
-                        value={digit}
-                        onChange={e => handleOtpChange(i, e.target.value)}
-                        onKeyDown={e => handleOtpKey(i, e)}
-                        className={`w-12 h-14 text-center text-xl font-bold rounded-xl border-2 transition-all focus:outline-none ${
-                          digit ? 'border-saffron-400 bg-saffron-50 text-saffron-700' : 'border-stone-200 text-stone-800 focus:border-saffron-400'
-                        }`}
-                      />
-                    ))}
+                  {/* Google */}
+                  <button onClick={handleGoogleSignIn} disabled={loading}
+                    className="w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-2xl border-2 border-stone-200 hover:border-stone-300 bg-white text-stone-700 font-medium text-sm transition-all mb-4 disabled:opacity-50">
+                    <svg className="w-5 h-5" viewBox="0 0 24 24">
+                      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                    </svg>
+                    Continue with Google
+                  </button>
+
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="flex-1 h-px bg-stone-200" />
+                    <span className="text-xs text-stone-400">or</span>
+                    <div className="flex-1 h-px bg-stone-200" />
                   </div>
 
-                  {error && <p className="text-red-500 text-sm mb-4 text-center">{error}</p>}
-                  <button
-                    onClick={handleVerifyOtp}
-                    disabled={otp.some(d => !d) || loading}
-                    className="btn-primary w-full py-4 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {loading ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <>Verify <ArrowRight className="w-5 h-5" /></>}
+                  {/* Email */}
+                  <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                    placeholder="Email address"
+                    className="w-full px-4 py-3.5 rounded-2xl border-2 border-stone-200 focus:border-saffron-400 text-stone-800 focus:outline-none mb-3 bg-white transition-colors"
+                    onKeyDown={e => e.key === 'Enter' && handleEmailAuth()}
+                  />
+                  <div className="relative mb-4">
+                    <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)}
+                      placeholder="Password"
+                      className="w-full px-4 py-3.5 rounded-2xl border-2 border-stone-200 focus:border-saffron-400 text-stone-800 focus:outline-none bg-white transition-colors pr-12"
+                      onKeyDown={e => e.key === 'Enter' && handleEmailAuth()}
+                    />
+                    <button type="button" onClick={() => setShowPassword(v => !v)}
+                      className="absolute right-4 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600">
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+
+                  {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
+
+                  <button onClick={handleEmailAuth} disabled={!email.trim() || !password || loading}
+                    className="btn-primary w-full py-4 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed mb-4">
+                    {loading
+                      ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      : <>{isSignIn ? 'Sign In' : 'Create Account'} <ArrowRight className="w-5 h-5" /></>
+                    }
                   </button>
-                  <button onClick={() => {}} className="w-full text-center text-sm text-stone-400 hover:text-saffron-600 mt-4 transition-colors">
-                    Resend OTP
-                  </button>
+
+                  <p className="text-center text-sm text-stone-500">
+                    {isSignIn ? "Don't have an account? " : 'Already have an account? '}
+                    <button onClick={() => { setIsSignIn(v => !v); setError(''); }}
+                      className="text-saffron-600 font-medium hover:underline">
+                      {isSignIn ? 'Sign up' : 'Sign in'}
+                    </button>
+                  </p>
                 </div>
               )}
 
@@ -272,20 +252,13 @@ export default function Signup() {
                   <div className="text-4xl mb-6">👋</div>
                   <h2 className="font-display text-3xl font-bold text-stone-800 mb-2">What's your name?</h2>
                   <p className="text-stone-500 text-sm mb-8">Your Vaidya will use this to personalise your care</p>
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={e => setName(e.target.value)}
+                  <input type="text" value={name} onChange={e => setName(e.target.value)}
                     placeholder="Arun Sharma"
                     className="w-full px-5 py-4 rounded-2xl border-2 border-stone-200 focus:border-saffron-400 text-lg font-medium text-stone-800 focus:outline-none mb-6 bg-white transition-colors"
-                    autoFocus
-                    onKeyDown={e => e.key === 'Enter' && name.trim() && go('dosha')}
+                    autoFocus onKeyDown={e => e.key === 'Enter' && name.trim() && go('dosha')}
                   />
-                  <button
-                    onClick={() => go('dosha')}
-                    disabled={!name.trim()}
-                    className="btn-primary w-full py-4 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
+                  <button onClick={() => go('dosha')} disabled={!name.trim()}
+                    className="btn-primary w-full py-4 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
                     Continue <ArrowRight className="w-5 h-5" />
                   </button>
                 </div>
@@ -302,18 +275,13 @@ export default function Signup() {
                   ) : (
                     <>
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-medium text-stone-400 uppercase tracking-wider">
-                          {doshaQuestions[doshaStep].category}
-                        </span>
+                        <span className="text-xs font-medium text-stone-400 uppercase tracking-wider">{doshaQuestions[doshaStep].category}</span>
                         <span className="text-xs text-stone-400">{doshaStep + 1} / {doshaQuestions.length}</span>
                       </div>
                       <div className="h-1 bg-stone-200 rounded-full mb-5">
-                        <motion.div
-                          animate={{ width: `${((doshaStep + 1) / doshaQuestions.length) * 100}%` }}
-                          className="h-full bg-saffron-400 rounded-full"
-                        />
+                        <motion.div animate={{ width: `${((doshaStep + 1) / doshaQuestions.length) * 100}%` }}
+                          className="h-full bg-saffron-400 rounded-full" />
                       </div>
-
                       {doshaStep === 0 && (
                         <div className="mb-5">
                           <p className="text-saffron-600 text-sm font-medium mb-1">One more step, {name}!</p>
@@ -321,38 +289,23 @@ export default function Signup() {
                           <p className="text-stone-500 text-xs mt-1">8 quick questions to personalise your experience</p>
                         </div>
                       )}
-
-                      {doshaStep > 0 && (
-                        <h2 className="font-display text-xl font-bold text-stone-800 mb-5 leading-snug">
-                          {doshaQuestions[doshaStep].question}
-                        </h2>
-                      )}
-                      {doshaStep === 0 && (
-                        <h2 className="font-display text-lg font-bold text-stone-800 mb-5 leading-snug">
-                          {doshaQuestions[0].question}
-                        </h2>
-                      )}
-
+                      <h2 className="font-display text-xl font-bold text-stone-800 mb-5 leading-snug">
+                        {doshaQuestions[doshaStep].question}
+                      </h2>
                       <div className="space-y-3 mb-6">
                         {doshaQuestions[doshaStep].options.map((opt, i) => (
-                          <button
-                            key={i}
-                            onClick={() => setSelectedOpt(opt.dosha)}
+                          <button key={i} onClick={() => setSelectedOpt(opt.dosha)}
                             className={`w-full text-left px-4 py-3.5 rounded-2xl border-2 text-sm transition-all ${
                               selectedOpt === opt.dosha
                                 ? 'border-saffron-400 bg-saffron-50 text-saffron-700 font-medium'
                                 : 'border-stone-200 text-stone-600 hover:border-stone-300 bg-white'
-                            }`}
-                          >
+                            }`}>
                             {opt.text}
                           </button>
                         ))}
                       </div>
-                      <button
-                        onClick={handleDoshaNext}
-                        disabled={!selectedOpt}
-                        className="btn-primary w-full py-3.5 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
+                      <button onClick={handleDoshaNext} disabled={!selectedOpt}
+                        className="btn-primary w-full py-3.5 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
                         {doshaStep === doshaQuestions.length - 1 ? 'See My Dosha' : 'Next'}
                         <ArrowRight className="w-4 h-4" />
                       </button>
@@ -364,19 +317,13 @@ export default function Signup() {
               {/* ── DONE ── */}
               {step === 'done' && doshaInfo && (
                 <div className="text-center">
-                  <motion.div
-                    initial={{ scale: 0.5, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
+                  <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
                     transition={{ type: 'spring', stiffness: 200, damping: 15 }}
                     className={`w-24 h-24 rounded-3xl flex items-center justify-center mx-auto mb-6 text-5xl shadow-xl ${
-                      dosha === 'vata' ? 'bg-purple-500' :
-                      dosha === 'pitta' ? 'bg-orange-400' :
-                      'bg-cyan-500'
-                    }`}
-                  >
+                      dosha === 'vata' ? 'bg-purple-500' : dosha === 'pitta' ? 'bg-orange-400' : 'bg-cyan-500'
+                    }`}>
                     {doshaInfo.emoji}
                   </motion.div>
-
                   <div className="flex items-center justify-center gap-2 mb-2">
                     <Sparkles className="w-4 h-4 text-saffron-500" />
                     <span className="text-saffron-600 text-sm font-medium">Your Prakriti revealed!</span>
@@ -386,7 +333,6 @@ export default function Signup() {
                   </h2>
                   <p className="text-stone-500 text-sm mb-1">{doshaInfo.elements}</p>
                   <p className="text-stone-500 text-sm italic mb-6">"{doshaInfo.tagline}"</p>
-
                   <div className="bg-stone-50 rounded-2xl p-4 mb-6 text-left space-y-2">
                     {doshaInfo.recommendations.slice(0, 3).map(r => (
                       <div key={r} className="flex items-start gap-2 text-sm text-stone-600">
@@ -395,11 +341,8 @@ export default function Signup() {
                       </div>
                     ))}
                   </div>
-
-                  <button
-                    onClick={() => navigate('/home')}
-                    className="btn-primary w-full py-4 flex items-center justify-center gap-2 text-base"
-                  >
+                  <button onClick={() => navigate('/home')}
+                    className="btn-primary w-full py-4 flex items-center justify-center gap-2 text-base">
                     Explore Vaidya <ArrowRight className="w-5 h-5" />
                   </button>
                 </div>

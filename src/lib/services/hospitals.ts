@@ -1,67 +1,38 @@
-import { supabase } from '../supabase';
-import type { Hospital, Database } from '../database.types';
+import {
+  collection, doc, getDoc, getDocs, addDoc, updateDoc, query, orderBy, where,
+} from 'firebase/firestore';
+import { db } from '../firebase';
+import type { Hospital } from '../database.types';
 
-// Fetch all hospitals
 export async function getHospitals(): Promise<Hospital[]> {
-  const { data, error } = await supabase
-    .from('hospitals')
-    .select('*')
-    .order('rating', { ascending: false });
-  if (error) throw error;
-  return data ?? [];
+  const snap = await getDocs(query(collection(db, 'hospitals'), orderBy('rating', 'desc')));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }) as Hospital);
 }
 
-// Fetch a single hospital by ID
 export async function getHospitalById(id: string): Promise<Hospital | null> {
-  const { data, error } = await supabase
-    .from('hospitals')
-    .select('*')
-    .eq('id', id)
-    .single();
-  if (error) return null;
-  return data;
+  const snap = await getDoc(doc(db, 'hospitals', id));
+  if (!snap.exists()) return null;
+  return { id: snap.id, ...snap.data() } as Hospital;
 }
 
-// Fetch hospital owned by current user
 export async function getMyHospital(ownerId: string): Promise<Hospital | null> {
-  const { data, error } = await supabase
-    .from('hospitals')
-    .select('*')
-    .eq('owner_id', ownerId)
-    .single();
-  if (error) return null;
-  return data;
+  const snap = await getDocs(query(collection(db, 'hospitals'), where('owner_id', '==', ownerId)));
+  if (snap.empty) return null;
+  const d = snap.docs[0];
+  return { id: d.id, ...d.data() } as Hospital;
 }
 
-// Register a new hospital
-export async function registerHospital(hospital: {
-  owner_id: string;
-  name: string;
-  tagline?: string;
-  description?: string;
-  city?: string;
-  state?: string;
-  phone?: string;
-  email?: string;
-  website?: string;
-  year_established?: number;
-  accreditations?: string[];
-  amenities?: string[];
-}): Promise<Hospital> {
-  const { data, error } = await supabase
-    .from('hospitals')
-    .insert(hospital)
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
+export async function registerHospital(hospital: Omit<Hospital, 'id' | 'created_at' | 'rating' | 'review_count' | 'verified'>): Promise<Hospital> {
+  const ref = await addDoc(collection(db, 'hospitals'), {
+    ...hospital,
+    rating: 0,
+    review_count: 0,
+    verified: false,
+    created_at: new Date().toISOString(),
+  });
+  return { id: ref.id, ...hospital, rating: 0, review_count: 0, verified: false, created_at: new Date().toISOString() };
 }
 
-// Update hospital details
-export async function updateHospital(id: string, updates: Database['public']['Tables']['hospitals']['Update']) {
-  const { error } = await supabase
-    .from('hospitals')
-    .update(updates)
-    .eq('id', id);
-  if (error) throw error;
+export async function updateHospital(id: string, updates: Partial<Omit<Hospital, 'id' | 'created_at'>>) {
+  await updateDoc(doc(db, 'hospitals', id), updates as any);
 }

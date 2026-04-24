@@ -1,13 +1,13 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 import type { DoshaType } from '../types';
-import { supabase } from '../lib/supabase';
+import { onAuthChange, signOut as authSignOut } from '../lib/services/auth';
 import { getProfile, upsertProfile } from '../lib/services/profiles';
-import { signOut as authSignOut } from '../lib/services/auth';
 
 export interface AppUser {
   id: string;
   name: string;
   phone: string;
+  email: string;
   dosha: DoshaType;
   avatar?: string;
 }
@@ -29,42 +29,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session?.user) {
-        const profile = await getProfile(session.user.id);
-        if (profile) {
-          setUser({
-            id: profile.id,
-            name: profile.name ?? '',
-            phone: profile.phone ?? '',
-            dosha: profile.dosha ?? 'vata',
-            avatar: profile.avatar_url ?? undefined,
-          });
-        }
+    const unsub = onAuthChange(async (firebaseUser) => {
+      if (firebaseUser) {
+        const profile = await getProfile(firebaseUser.uid);
+        setUser({
+          id: firebaseUser.uid,
+          name: profile?.name ?? firebaseUser.displayName ?? '',
+          phone: profile?.phone ?? '',
+          email: firebaseUser.email ?? '',
+          dosha: profile?.dosha ?? 'vata',
+          avatar: firebaseUser.photoURL ?? profile?.avatar_url ?? undefined,
+        });
+      } else {
+        setUser(null);
       }
       setLoading(false);
     });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (event === 'SIGNED_OUT' || !session) {
-        setUser(null);
-        return;
-      }
-      if (session?.user) {
-        const profile = await getProfile(session.user.id);
-        if (profile) {
-          setUser({
-            id: profile.id,
-            name: profile.name ?? '',
-            phone: profile.phone ?? '',
-            dosha: profile.dosha ?? 'vata',
-            avatar: profile.avatar_url ?? undefined,
-          });
-        }
-      }
-    });
-
-    return () => subscription.unsubscribe();
+    return unsub;
   }, []);
 
   const login = (u: AppUser) => setUser(u);
@@ -76,16 +57,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const updateDosha = async (dosha: DoshaType) => {
     setUser(prev => prev ? { ...prev, dosha } : null);
-    if (user) {
-      await upsertProfile(user.id, { dosha });
-    }
+    if (user) await upsertProfile(user.id, { dosha });
   };
 
   const updateName = async (name: string) => {
     setUser(prev => prev ? { ...prev, name } : null);
-    if (user) {
-      await upsertProfile(user.id, { name });
-    }
+    if (user) await upsertProfile(user.id, { name });
   };
 
   return (
