@@ -4,7 +4,6 @@ import { motion } from 'framer-motion';
 import { LogOut, ChevronRight, Bell, Shield, HelpCircle, Star, Phone, Brain, Edit2, Check } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { doshaDescriptions } from '../data/mockData';
-import { mockAppointments } from '../data/mockData';
 
 export default function UserProfile() {
   const { user, isAuthenticated, logout, updateName } = useApp();
@@ -17,8 +16,8 @@ export default function UserProfile() {
   const doshaInfo = user?.dosha && (user.dosha === 'vata' || user.dosha === 'pitta' || user.dosha === 'kapha')
     ? doshaDescriptions[user.dosha] : null;
 
-  const completed = mockAppointments.filter(a => a.status === 'completed').length;
-  const upcoming = mockAppointments.filter(a => a.status === 'confirmed' || a.status === 'pending').length;
+  const completed = 0;
+  const upcoming = 0;
 
   const handleSaveName = () => {
     if (nameInput.trim()) updateName(nameInput.trim());
@@ -96,7 +95,7 @@ export default function UserProfile() {
           {/* Stats */}
           <div className="grid grid-cols-3 gap-3 mt-5">
             {[
-              { label: 'Appointments', value: mockAppointments.length },
+              { label: 'Appointments', value: completed + upcoming },
               { label: 'Completed', value: completed },
               { label: 'Upcoming', value: upcoming },
             ].map(s => (

@@ -1,63 +1,91 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Navigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Video, MapPin, IndianRupee } from 'lucide-react';
-import { mockDoctors, TIME_SLOTS } from '../data/mockData';
+import { getDoctorById } from '../lib/services/doctors';
+import { createAppointment } from '../lib/services/appointments';
+import type { DoctorWithRelations } from '../lib/database.types';
+import { TIME_SLOTS } from '../data/mockData';
 import { useApp } from '../context/AppContext';
 import type { AppointmentType } from '../types';
 
 export default function BookAppointment() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { isAuthenticated } = useApp();
+  const { user, isAuthenticated } = useApp();
 
+  const [doctor, setDoctor] = useState<DoctorWithRelations | null>(null);
   const [type, setType] = useState<AppointmentType>('in-person');
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedTime, setSelectedTime] = useState('');
   const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!id) return;
+    getDoctorById(id).then(setDoctor);
+  }, [id]);
 
   if (!isAuthenticated) return <Navigate to="/signup" replace />;
+  if (!doctor) return (
+    <div className="min-h-screen bg-warm flex items-center justify-center">
+      <div className="w-8 h-8 border-4 border-saffron-200 border-t-saffron-500 rounded-full animate-spin" />
+    </div>
+  );
 
-  const doctor = mockDoctors.find(d => d.id === id);
-  if (!doctor) return <div className="p-8 text-center text-stone-400">Vaidya not found.</div>;
+  const fee = type === 'video' ? doctor.video_fee : doctor.consultation_fee;
 
-  const fee = type === 'video' ? doctor.videoFee : doctor.consultationFee;
-
-  // Generate next 7 available dates
   const availableDates: string[] = [];
   const today = new Date();
   for (let i = 1; i <= 14 && availableDates.length < 7; i++) {
     const d = new Date(today);
     d.setDate(today.getDate() + i);
     const dayName = d.toLocaleDateString('en-US', { weekday: 'short' });
-    if (doctor.availableDays.includes(dayName)) {
+    if (doctor.available_days.includes(dayName)) {
       availableDates.push(d.toISOString().split('T')[0]);
     }
   }
 
-  const canBook = selectedDate && selectedTime;
+  const canBook = selectedDate && selectedTime && !submitting;
 
-  const handleConfirm = () => {
-    if (!canBook) return;
-    navigate('/booking-confirmed', {
-      state: {
-        doctorId: doctor.id,
-        doctorName: doctor.name,
-        doctorPhoto: doctor.photo,
-        hospitalName: doctor.hospitalName,
+  const handleConfirm = async () => {
+    if (!canBook || !user) return;
+    setSubmitting(true);
+    try {
+      const meetingLink = type === 'video' ? `https://meet.vaidya.in/room-${Math.random().toString(36).slice(2, 8)}` : null;
+      const appt = await createAppointment({
+        patient_id: user.id,
+        doctor_id: doctor.id,
+        hospital_id: doctor.hospital_id ?? null,
         date: selectedDate,
         time: selectedTime,
         type,
+        notes: notes || null,
         fee,
-        notes,
-        meetingLink: type === 'video' ? 'https://meet.vaidya.in/room-' + Math.random().toString(36).slice(2, 8) : undefined,
-      },
-    });
+        meeting_link: meetingLink,
+      });
+      navigate('/booking-confirmed', {
+        state: {
+          appointmentId: appt.id,
+          doctorId: doctor.id,
+          doctorName: doctor.name,
+          doctorPhoto: doctor.photo_url,
+          hospitalName: doctor.hospital_name,
+          date: selectedDate,
+          time: selectedTime,
+          type,
+          fee,
+          meetingLink,
+        },
+      });
+    } catch (e) {
+      console.error(e);
+      setSubmitting(false);
+    }
   };
 
   return (
     <div className="min-h-screen bg-warm pb-32">
-      {/* Header */}
       <div className="bg-white border-b border-stone-100 px-4 py-4 sticky top-0 z-40">
         <div className="max-w-lg mx-auto flex items-center gap-3">
           <button onClick={() => navigate(-1)} className="p-2 rounded-xl hover:bg-stone-100 text-stone-600 transition-colors">
@@ -73,11 +101,17 @@ export default function BookAppointment() {
       <div className="max-w-lg mx-auto px-4 py-5 space-y-5">
         {/* Doctor mini card */}
         <div className="bg-white rounded-2xl border border-earth-100 p-4 flex items-center gap-3">
-          <img src={doctor.photo} alt={doctor.name} className="w-14 h-14 rounded-xl object-cover" />
+          {doctor.photo_url ? (
+            <img src={doctor.photo_url} alt={doctor.name} className="w-14 h-14 rounded-xl object-cover" />
+          ) : (
+            <div className="w-14 h-14 rounded-xl bg-saffron-100 flex items-center justify-center text-saffron-600 font-bold text-xl">
+              {doctor.name.charAt(0)}
+            </div>
+          )}
           <div>
             <p className="font-semibold text-stone-800">{doctor.name}</p>
             <p className="text-xs text-stone-400">{doctor.title}</p>
-            <p className="text-xs text-saffron-600 font-medium mt-0.5">★ {doctor.rating} · {doctor.hospitalName}</p>
+            <p className="text-xs text-saffron-600 font-medium mt-0.5">★ {doctor.rating} · {doctor.hospital_name}</p>
           </div>
         </div>
 
@@ -96,12 +130,12 @@ export default function BookAppointment() {
               </div>
               <div className="text-center">
                 <p className={`text-sm font-semibold ${type === 'in-person' ? 'text-saffron-700' : 'text-stone-700'}`}>In-Person</p>
-                <p className={`text-xs ${type === 'in-person' ? 'text-saffron-500' : 'text-stone-400'}`}>₹{doctor.consultationFee}</p>
+                <p className={`text-xs ${type === 'in-person' ? 'text-saffron-500' : 'text-stone-400'}`}>₹{doctor.consultation_fee}</p>
               </div>
             </button>
             <button
-              onClick={() => doctor.acceptsVideo && setType('video')}
-              disabled={!doctor.acceptsVideo}
+              onClick={() => doctor.accepts_video && setType('video')}
+              disabled={!doctor.accepts_video}
               className={`flex flex-col items-center gap-2.5 p-4 rounded-2xl border-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
                 type === 'video' ? 'border-herbal-400 bg-herbal-50' : 'border-stone-200 hover:border-stone-300'
               }`}
@@ -111,7 +145,7 @@ export default function BookAppointment() {
               </div>
               <div className="text-center">
                 <p className={`text-sm font-semibold ${type === 'video' ? 'text-herbal-700' : 'text-stone-700'}`}>Video Call</p>
-                <p className={`text-xs ${type === 'video' ? 'text-herbal-500' : 'text-stone-400'}`}>₹{doctor.videoFee}</p>
+                <p className={`text-xs ${type === 'video' ? 'text-herbal-500' : 'text-stone-400'}`}>₹{doctor.video_fee}</p>
               </div>
             </button>
           </div>
@@ -120,31 +154,35 @@ export default function BookAppointment() {
         {/* Date picker */}
         <div className="bg-white rounded-2xl border border-earth-100 p-5">
           <h2 className="font-semibold text-stone-800 mb-3">Select Date</h2>
-          <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
-            {availableDates.map(date => {
-              const d = new Date(date);
-              const isSelected = selectedDate === date;
-              return (
-                <button
-                  key={date}
-                  onClick={() => { setSelectedDate(date); setSelectedTime(''); }}
-                  className={`flex-none flex flex-col items-center px-4 py-3 rounded-2xl border-2 min-w-[64px] transition-all ${
-                    isSelected ? 'border-saffron-400 bg-saffron-50' : 'border-stone-200 hover:border-stone-300'
-                  }`}
-                >
-                  <span className={`text-xs font-medium ${isSelected ? 'text-saffron-500' : 'text-stone-400'}`}>
-                    {d.toLocaleDateString('en-US', { weekday: 'short' })}
-                  </span>
-                  <span className={`text-lg font-bold ${isSelected ? 'text-saffron-700' : 'text-stone-700'}`}>
-                    {d.getDate()}
-                  </span>
-                  <span className={`text-xs ${isSelected ? 'text-saffron-500' : 'text-stone-400'}`}>
-                    {d.toLocaleDateString('en-US', { month: 'short' })}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+          {availableDates.length === 0 ? (
+            <p className="text-sm text-stone-400">No available dates in the next 2 weeks.</p>
+          ) : (
+            <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+              {availableDates.map(date => {
+                const d = new Date(date);
+                const isSelected = selectedDate === date;
+                return (
+                  <button
+                    key={date}
+                    onClick={() => { setSelectedDate(date); setSelectedTime(''); }}
+                    className={`flex-none flex flex-col items-center px-4 py-3 rounded-2xl border-2 min-w-[64px] transition-all ${
+                      isSelected ? 'border-saffron-400 bg-saffron-50' : 'border-stone-200 hover:border-stone-300'
+                    }`}
+                  >
+                    <span className={`text-xs font-medium ${isSelected ? 'text-saffron-500' : 'text-stone-400'}`}>
+                      {d.toLocaleDateString('en-US', { weekday: 'short' })}
+                    </span>
+                    <span className={`text-lg font-bold ${isSelected ? 'text-saffron-700' : 'text-stone-700'}`}>
+                      {d.getDate()}
+                    </span>
+                    <span className={`text-xs ${isSelected ? 'text-saffron-500' : 'text-stone-400'}`}>
+                      {d.toLocaleDateString('en-US', { month: 'short' })}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Time slots */}
@@ -182,7 +220,9 @@ export default function BookAppointment() {
 
         {/* Notes */}
         <div className="bg-white rounded-2xl border border-earth-100 p-5">
-          <h2 className="font-semibold text-stone-800 mb-3">Reason / Notes <span className="text-stone-400 font-normal text-sm">(optional)</span></h2>
+          <h2 className="font-semibold text-stone-800 mb-3">
+            Reason / Notes <span className="text-stone-400 font-normal text-sm">(optional)</span>
+          </h2>
           <textarea
             value={notes}
             onChange={e => setNotes(e.target.value)}
@@ -205,9 +245,12 @@ export default function BookAppointment() {
           <button
             onClick={handleConfirm}
             disabled={!canBook}
-            className="btn-primary flex-1 py-3.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="btn-primary flex-1 py-3.5 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
-            {!selectedDate ? 'Select a date' : !selectedTime ? 'Select a time' : 'Confirm Booking'}
+            {submitting
+              ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              : !selectedDate ? 'Select a date' : !selectedTime ? 'Select a time' : 'Confirm Booking'
+            }
           </button>
         </div>
       </div>

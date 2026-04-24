@@ -1,8 +1,10 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Search, Video, Star, MapPin, SlidersHorizontal, X } from 'lucide-react';
-import { mockDoctors, SPECIALTIES } from '../../data/mockData';
+import { getDoctors } from '../../lib/services/doctors';
+import { getSpecialities } from '../../lib/services/specialities';
+import type { DoctorWithRelations, Speciality } from '../../lib/database.types';
 
 const doshaColors: Record<string, string> = {
   vata: 'bg-purple-100 text-purple-700',
@@ -15,24 +17,32 @@ export default function Doctors() {
   const [specialty, setSpecialty] = useState('');
   const [doshaFilter, setDoshaFilter] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [doctors, setDoctors] = useState<DoctorWithRelations[]>([]);
+  const [specialities, setSpecialities] = useState<Speciality[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([getDoctors(), getSpecialities()])
+      .then(([docs, specs]) => { setDoctors(docs); setSpecialities(specs); })
+      .finally(() => setLoading(false));
+  }, []);
 
   const filtered = useMemo(() => {
-    return mockDoctors.filter(d => {
+    return doctors.filter(d => {
       const matchSearch = !search ||
         d.name.toLowerCase().includes(search.toLowerCase()) ||
-        d.hospitalName.toLowerCase().includes(search.toLowerCase());
-      const matchSpecialty = !specialty || d.specialties.includes(specialty);
-      const matchDosha = !doshaFilter || d.doshaExpertise.includes(doshaFilter as any);
+        (d.hospital_name ?? '').toLowerCase().includes(search.toLowerCase());
+      const matchSpecialty = !specialty || d.speciality_names?.includes(specialty);
+      const matchDosha = !doshaFilter || d.dosha_expertise.includes(doshaFilter);
       return matchSearch && matchSpecialty && matchDosha;
     });
-  }, [search, specialty, doshaFilter]);
+  }, [search, specialty, doshaFilter, doctors]);
 
   const hasFilters = search || specialty || doshaFilter;
 
   return (
     <div className="min-h-screen bg-warm py-10 px-4">
       <div className="max-w-6xl mx-auto">
-        {/* Header */}
         <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
           <h1 className="font-display text-4xl font-bold text-stone-800">Our Vaidyas</h1>
           <p className="mt-2 text-stone-500">Certified Ayurvedic practitioners ready to guide your healing</p>
@@ -71,7 +81,7 @@ export default function Doctors() {
               <select value={specialty} onChange={e => setSpecialty(e.target.value)}
                 className="w-full px-3 py-2 rounded-xl border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-saffron-300 bg-white">
                 <option value="">All Specialties</option>
-                {SPECIALTIES.map(s => <option key={s} value={s}>{s}</option>)}
+                {specialities.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
               </select>
             </div>
             <div>
@@ -95,71 +105,94 @@ export default function Doctors() {
           </motion.div>
         )}
 
-        {/* Results count */}
-        <p className="text-sm text-stone-500 mb-5">{filtered.length} Vaidya{filtered.length !== 1 ? 's' : ''} found</p>
-
-        {/* Grid */}
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filtered.map((doc, i) => (
-            <motion.div key={doc.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
-              <Link to={`/vaidya/${doc.id}`} className="card p-5 block hover:border-saffron-200 hover:-translate-y-0.5 transition-all">
+        {loading ? (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            {[1,2,3,4,5,6].map(i => (
+              <div key={i} className="bg-white rounded-2xl border border-earth-100 p-5 animate-pulse">
                 <div className="flex gap-4 mb-4">
-                  <img src={doc.photo} alt={doc.name} className="w-16 h-16 rounded-xl object-cover shrink-0" />
-                  <div className="min-w-0">
-                    <h3 className="font-semibold text-stone-800 truncate">{doc.name}</h3>
-                    <p className="text-xs text-stone-400 mt-0.5">{doc.title}</p>
-                    <div className="flex items-center gap-1 mt-1">
-                      <Star className="w-3.5 h-3.5 text-saffron-400 fill-saffron-400" />
-                      <span className="text-sm font-medium text-stone-700">{doc.rating}</span>
-                      <span className="text-xs text-stone-400">({doc.reviewCount})</span>
-                    </div>
+                  <div className="w-16 h-16 bg-stone-200 rounded-xl shrink-0" />
+                  <div className="flex-1 space-y-2 pt-1">
+                    <div className="h-3 bg-stone-200 rounded w-3/4" />
+                    <div className="h-3 bg-stone-200 rounded w-1/2" />
                   </div>
                 </div>
-
-                <div className="flex items-center gap-1.5 text-xs text-stone-400 mb-3">
-                  <MapPin className="w-3 h-3 shrink-0" />
-                  <span className="truncate">{doc.hospitalName}</span>
-                </div>
-
-                <div className="flex flex-wrap gap-1.5 mb-3">
-                  {doc.specialties.slice(0, 2).map(s => (
-                    <span key={s} className="text-xs bg-earth-50 text-earth-700 border border-earth-100 px-2 py-0.5 rounded-full">{s.split(' ')[0]}</span>
-                  ))}
-                </div>
-
-                <div className="flex flex-wrap gap-1.5 mb-4">
-                  {doc.doshaExpertise.map(d => (
-                    <span key={String(d)} className={`text-xs px-2 py-0.5 rounded-full capitalize font-medium ${d ? (doshaColors[d as string] || '') : ''}`}>{d}</span>
-                  ))}
-                </div>
-
-                <div className="flex items-center justify-between pt-3 border-t border-stone-100">
-                  <div className="text-sm">
-                    <span className="font-bold text-stone-800">₹{doc.videoFee}</span>
-                    <span className="text-stone-400 text-xs"> / session</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs">
-                    {doc.acceptsVideo && (
-                      <span className="flex items-center gap-1 text-herbal-600 bg-herbal-50 px-2 py-1 rounded-full">
-                        <Video className="w-3 h-3" /> Video
-                      </span>
-                    )}
-                    <span className="text-stone-400">{doc.experience} yrs</span>
-                  </div>
-                </div>
-              </Link>
-            </motion.div>
-          ))}
-        </div>
-
-        {filtered.length === 0 && (
-          <div className="text-center py-20 text-stone-400">
-            <Search className="w-12 h-12 mx-auto mb-3 opacity-30" />
-            <p className="text-lg font-medium">No Vaidyas found</p>
-            <button onClick={() => { setSearch(''); setSpecialty(''); setDoshaFilter(''); }} className="text-saffron-600 text-sm mt-2 hover:underline">
-              Clear filters
-            </button>
+              </div>
+            ))}
           </div>
+        ) : (
+          <>
+            <p className="text-sm text-stone-500 mb-5">{filtered.length} Vaidya{filtered.length !== 1 ? 's' : ''} found</p>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+              {filtered.map((doc, i) => (
+                <motion.div key={doc.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
+                  <Link to={`/vaidya/${doc.id}`} className="card p-5 block hover:border-saffron-200 hover:-translate-y-0.5 transition-all">
+                    <div className="flex gap-4 mb-4">
+                      {doc.photo_url ? (
+                        <img src={doc.photo_url} alt={doc.name} className="w-16 h-16 rounded-xl object-cover shrink-0" />
+                      ) : (
+                        <div className="w-16 h-16 rounded-xl bg-saffron-100 flex items-center justify-center text-saffron-600 font-bold text-xl shrink-0">
+                          {doc.name.charAt(0)}
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <h3 className="font-semibold text-stone-800 truncate">{doc.name}</h3>
+                        <p className="text-xs text-stone-400 mt-0.5">{doc.title}</p>
+                        <div className="flex items-center gap-1 mt-1">
+                          <Star className="w-3.5 h-3.5 text-saffron-400 fill-saffron-400" />
+                          <span className="text-sm font-medium text-stone-700">{doc.rating}</span>
+                          <span className="text-xs text-stone-400">({doc.review_count})</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {doc.hospital_name && (
+                      <div className="flex items-center gap-1.5 text-xs text-stone-400 mb-3">
+                        <MapPin className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{doc.hospital_name}</span>
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap gap-1.5 mb-3">
+                      {doc.speciality_names?.slice(0, 2).map(s => (
+                        <span key={s} className="text-xs bg-earth-50 text-earth-700 border border-earth-100 px-2 py-0.5 rounded-full">{s.split(' ')[0]}</span>
+                      ))}
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 mb-4">
+                      {doc.dosha_expertise.map(d => (
+                        <span key={d} className={`text-xs px-2 py-0.5 rounded-full capitalize font-medium ${doshaColors[d] ?? ''}`}>{d}</span>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center justify-between pt-3 border-t border-stone-100">
+                      <div className="text-sm">
+                        <span className="font-bold text-stone-800">₹{doc.video_fee}</span>
+                        <span className="text-stone-400 text-xs"> / session</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs">
+                        {doc.accepts_video && (
+                          <span className="flex items-center gap-1 text-herbal-600 bg-herbal-50 px-2 py-1 rounded-full">
+                            <Video className="w-3 h-3" /> Video
+                          </span>
+                        )}
+                        <span className="text-stone-400">{doc.experience} yrs</span>
+                      </div>
+                    </div>
+                  </Link>
+                </motion.div>
+              ))}
+            </div>
+
+            {filtered.length === 0 && (
+              <div className="text-center py-20 text-stone-400">
+                <Search className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                <p className="text-lg font-medium">No Vaidyas found</p>
+                <button onClick={() => { setSearch(''); setSpecialty(''); setDoshaFilter(''); }} className="text-saffron-600 text-sm mt-2 hover:underline">
+                  Clear filters
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

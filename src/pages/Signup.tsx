@@ -5,6 +5,9 @@ import { Leaf, ArrowRight, ArrowLeft, Phone, CheckCircle2, Sparkles } from 'luci
 import { useApp } from '../context/AppContext';
 import { doshaQuestions, doshaDescriptions } from '../data/mockData';
 import type { DoshaType } from '../types';
+import { sendOtp, verifyOtp } from '../lib/services/auth';
+import { upsertProfile } from '../lib/services/profiles';
+import { supabase } from '../lib/supabase';
 
 type Step = 'welcome' | 'phone' | 'otp' | 'name' | 'dosha' | 'done';
 
@@ -22,6 +25,7 @@ export default function Signup() {
   const [selectedOpt, setSelectedOpt] = useState<string | null>(null);
   const [dosha, setDosha] = useState<DoshaType>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const otpRefs = useRef<(HTMLInputElement | null)[]>([]);
   const { login } = useApp();
   const navigate = useNavigate();
@@ -30,7 +34,36 @@ export default function Signup() {
     const cur = STEP_ORDER.indexOf(step);
     const nxt = STEP_ORDER.indexOf(next);
     setDir(nxt > cur ? 1 : -1);
+    setError('');
     setStep(next);
+  };
+
+  const handleSendOtp = async () => {
+    if (phone.length !== 10) return;
+    setLoading(true);
+    setError('');
+    try {
+      await sendOtp(`+91${phone}`);
+      go('otp');
+    } catch (e: any) {
+      setError(e.message ?? 'Failed to send OTP. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyOtp = async () => {
+    if (otp.some(d => !d)) return;
+    setLoading(true);
+    setError('');
+    try {
+      await verifyOtp(`+91${phone}`, otp.join(''));
+      go('name');
+    } catch (e: any) {
+      setError(e.message ?? 'Invalid OTP. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   // OTP auto-focus
@@ -58,7 +91,7 @@ export default function Signup() {
     );
   };
 
-  const handleDoshaNext = () => {
+  const handleDoshaNext = async () => {
     if (selectedOpt) {
       const q = doshaQuestions[doshaStep];
       setDoshaAnswers(prev => ({ ...prev, [q.id]: selectedOpt as 'vata' | 'pitta' | 'kapha' }));
@@ -69,11 +102,20 @@ export default function Signup() {
         const result = computeDosha();
         setDosha(result);
         setLoading(true);
-        setTimeout(() => {
+        try {
+          const { data: { user: authUser } } = await supabase.auth.getUser();
+          if (authUser) {
+            const profile = await upsertProfile(authUser.id, { name, phone: `+91${phone}`, dosha: result, role: 'patient' });
+            login({ id: authUser.id, name: profile?.name ?? name, phone: `+91${phone}`, dosha: result });
+          } else {
+            login({ id: 'u-' + Date.now(), name, phone, dosha: result });
+          }
+        } catch {
           login({ id: 'u-' + Date.now(), name, phone, dosha: result });
+        } finally {
           setLoading(false);
           go('done');
-        }, 600);
+        }
       }
     }
   };
@@ -155,15 +197,16 @@ export default function Signup() {
                       placeholder="98765 43210"
                       className="flex-1 px-4 py-4 text-lg font-medium text-stone-800 focus:outline-none bg-white tracking-widest"
                       autoFocus
-                      onKeyDown={e => e.key === 'Enter' && phone.length === 10 && go('otp')}
+                      onKeyDown={e => e.key === 'Enter' && phone.length === 10 && handleSendOtp()}
                     />
                   </div>
+                  {error && <p className="text-red-500 text-sm mb-4">{error}</p>}
                   <button
-                    onClick={() => go('otp')}
-                    disabled={phone.length !== 10}
+                    onClick={handleSendOtp}
+                    disabled={phone.length !== 10 || loading}
                     className="btn-primary w-full py-4 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Send OTP <ArrowRight className="w-5 h-5" />
+                    {loading ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <>Send OTP <ArrowRight className="w-5 h-5" /></>}
                   </button>
                 </div>
               )}
@@ -176,7 +219,7 @@ export default function Signup() {
                   </div>
                   <h2 className="font-display text-3xl font-bold text-stone-800 mb-2">Verify your number</h2>
                   <p className="text-stone-500 text-sm mb-2">OTP sent to +91 {phone}</p>
-                  <p className="text-xs text-saffron-600 font-medium mb-8">Use any 6 digits to continue (demo)</p>
+                  <p className="text-xs text-stone-400 mb-8">Enter the 6-digit code sent via SMS</p>
 
                   <div className="flex gap-3 justify-center mb-8">
                     {otp.map((digit, i) => (
@@ -196,12 +239,13 @@ export default function Signup() {
                     ))}
                   </div>
 
+                  {error && <p className="text-red-500 text-sm mb-4 text-center">{error}</p>}
                   <button
-                    onClick={() => go('name')}
-                    disabled={otp.some(d => !d)}
+                    onClick={handleVerifyOtp}
+                    disabled={otp.some(d => !d) || loading}
                     className="btn-primary w-full py-4 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Verify <ArrowRight className="w-5 h-5" />
+                    {loading ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <>Verify <ArrowRight className="w-5 h-5" /></>}
                   </button>
                   <button onClick={() => {}} className="w-full text-center text-sm text-stone-400 hover:text-saffron-600 mt-4 transition-colors">
                     Resend OTP
