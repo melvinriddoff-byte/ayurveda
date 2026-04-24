@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --saffron: #f8860a;
+    --earth: #d6722a;
+    --herbal: #16a34a;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    margin: 0;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background-color: #fdf6ef;
+    color: #1c1917;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+
+  #root {
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-saffron-500 hover:bg-saffron-600 text-white font-semibold px-6 py-3 rounded-xl transition-all duration-200 shadow-md hover:shadow-lg active:scale-95;
+  }
+
+  .btn-secondary {
+    @apply bg-white border-2 border-saffron-400 text-saffron-600 hover:bg-saffron-50 font-semibold px-6 py-3 rounded-xl transition-all duration-200;
+  }
+
+  .btn-ghost {
+    @apply text-stone-600 hover:text-saffron-600 hover:bg-saffron-50 font-medium px-4 py-2 rounded-lg transition-all duration-200;
+  }
+
+  .card {
+    @apply bg-white rounded-2xl shadow-sm border border-earth-100 hover:shadow-md transition-shadow duration-200;
+  }
+
+  .section-heading {
+    @apply font-display text-3xl md:text-4xl font-bold text-stone-800;
+  }
+
+  .dosha-vata {
+    @apply bg-purple-50 border-purple-200 text-purple-700;
+  }
+
+  .dosha-pitta {
+    @apply bg-orange-50 border-orange-200 text-orange-700;
+  }
+
+  .dosha-kapha {
+    @apply bg-cyan-50 border-cyan-200 text-cyan-700;
+  }
+}
+
+@layer utilities {
+  .font-display {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+
+  .font-body {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  .text-gradient {
+    background: linear-gradient(135deg, #f8860a, #d6722a);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .bg-warm {
+    background: linear-gradient(135deg, #fff9ed 0%, #fdf6ef 50%, #f9e9d5 100%);
+  }
+}
